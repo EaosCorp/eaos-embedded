@@ -24,6 +24,7 @@ echo "[2/5] config -> /etc/uii (existing files kept)"
 mkdir -p /etc/uii /var/lib/uii
 [ -f /etc/uii/hub.json ]  || cp "$DEST/deploy/hub.json.example"  /etc/uii/hub.json
 [ -f /etc/uii/pimod.env ] || cp "$DEST/deploy/pimod.env.example" /etc/uii/pimod.env
+[ -f /etc/uii/mqtt-shim.json ] || cp "$DEST/deploy/mqtt-shim.json.example" /etc/uii/mqtt-shim.json
 
 echo "[3/5] cli -> /usr/local/bin/uii"
 cat > /usr/local/bin/uii <<'EOF'
@@ -43,7 +44,7 @@ fi
 echo "[5/5] systemd units"
 if command -v systemctl >/dev/null 2>&1; then
     cp "$DEST/deploy/uii-hub.service" "$DEST/deploy/uii-pimod.service" \
-        /etc/systemd/system/
+        "$DEST/deploy/uii-mqtt-shim.service" /etc/systemd/system/
     systemctl daemon-reload
     echo
     echo "Installed. Review /etc/uii/pimod.env and /etc/uii/hub.json, then:"

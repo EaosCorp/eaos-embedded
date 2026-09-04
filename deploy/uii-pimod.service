@@ -7,7 +7,7 @@ Wants=uii-hub.service
 Type=simple
 WorkingDirectory=/opt/uii
 EnvironmentFile=/etc/uii/pimod.env
-ExecStart=/usr/bin/python3 -m extensions.analyzer.pimod
+ExecStart=/usr/bin/python3 -m uii_analyzer.pimod
 Restart=always
 RestartSec=3
 

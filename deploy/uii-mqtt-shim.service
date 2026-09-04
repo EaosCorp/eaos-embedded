@@ -1,0 +1,16 @@
+[Unit]
+Description=UII MQTT shim — legacy NH4MOD units presented as UII modules
+After=uii-hub.service mosquitto.service
+Wants=uii-hub.service
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/uii
+Environment=UII_SHIM_CONFIG=/etc/uii/mqtt-shim.json
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/usr/bin/python3 -m uii_analyzer.mqtt_shim
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

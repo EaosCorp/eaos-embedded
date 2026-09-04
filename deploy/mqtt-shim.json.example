@@ -1,0 +1,9 @@
+{
+  "hub": "127.0.0.1:7300",
+  "broker": "127.0.0.1:1883",
+  "offline_after_s": 90,
+  "units": {
+    "nh4mod-01": {"slot": "slot-1", "analyte": "NH4",
+                  "serial": "NH4MOD-LEGACY-0001"}
+  }
+}

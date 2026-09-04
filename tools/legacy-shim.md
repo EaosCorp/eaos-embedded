@@ -10,6 +10,12 @@ Source now lives at `~/Desktop/_cleanup-2026-07-15/zz-unclear/NH4MOD PROD4/`
 > bridge, ST9 timelines, ADC capture) was ported into a native UII module
 > agent — see `DEPLOY.md` for the cutover. This doc remains the reference
 > for what the legacy system was and how its surface maps onto UII.
+>
+> **2026-08-25: the Stage-1 shim exists after all** — `uii_analyzer/mqtt_shim.py`,
+> built for the HRSD Nansemond POC so units still running the legacy gateway
+> (unmodified, just repointed at the hub box's broker) appear on the hub as
+> real modules. The mapping table below is its spec. pimod / the MCU
+> front-end remains the endstate; the shim retires unit-by-unit.
 
 ## What the current system actually is
 
