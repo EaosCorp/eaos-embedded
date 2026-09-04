@@ -55,8 +55,11 @@ from uii.protocol import PROTO, encode, now_iso
 
 from .mqtt_min import MQTTClient
 
-STATE_FOR_ACTION = {"prime": "priming", "calibrate": "calibrating",
-                    "sample": "sampling"}
+STATE_FOR_ACTION = {"prime": "priming", "prime2": "priming",
+                    "calibrate": "calibrating", "sample": "sampling"}
+# every timeline action needs the Pi in charge of the device; declaring it lets
+# the hub answer 422 instantly instead of a round-trip to a unit that will refuse
+NEEDS_ENDPOINT = ["mode:ENDPOINT"]
 LEGACY_DEFAULT_PI_ID = "nh4mod"
 DEFAULT_CONFIG_PATH = "/etc/uii/mqtt-shim.json"
 DEFAULTS = {
@@ -181,17 +184,51 @@ def manifest(analyte: str) -> dict:
             {"name": "detector_raw", "unit": "V"},
         ],
         "commands": [
-            {"type": "take_control", "risk": "disruptive"},
-            {"type": "bridge", "risk": "disruptive"},
-            {"type": "prime", "risk": "routine"},
+            {"type": "take_control", "risk": "disruptive",
+             "doc": "latch ENDPOINT: the Pi drives the device and the PLC is "
+                    "bypassed until bridge or reboot"},
+            {"type": "bridge", "risk": "disruptive",
+             "doc": "hand authority back to the PLC"},
+            {"type": "prime", "risk": "routine", "preconditions": NEEDS_ENDPOINT,
+             "typical_duration_s": 300,
+             "doc": "full prime: ST9 35, 40, 41 over 5 min"},
+            {"type": "prime2", "risk": "routine", "preconditions": NEEDS_ENDPOINT,
+             "typical_duration_s": 15,
+             "doc": "short prime: ST9 35 then 88 in 15 s (gateway build "
+                    "2026-09; earlier builds answer 'Unknown action')"},
             {"type": "calibrate", "risk": "disruptive",
+             "preconditions": NEEDS_ENDPOINT, "typical_duration_s": 1500,
              "params": {"std_conc": {"type": "number", "required": True,
                                      "max": 1000, "unit": "mg/L",
                                      "doc": "standard concentration; the "
                                             "unit enforces > 0"}}},
-            {"type": "sample", "risk": "routine"},
+            {"type": "sample", "risk": "routine", "preconditions": NEEDS_ENDPOINT,
+             "typical_duration_s": 900},
         ],
     }
+
+
+def normalise_result(data: dict, analyte: str) -> dict:
+    """Give a legacy `results` payload the `value`/`unit` the hub reads,
+    whichever gateway build wrote it: the 2026-09 build says `nh4_mgL`
+    (type "sample"), earlier builds and the bench say `value_mgL`
+    (type "sample_result"). Calibration results keep their fit as-is."""
+    out = dict(data)
+    if out.get("type") in ("sample", "sample_result") and "value" not in out:
+        for key in (f"{analyte.lower()}_mgL", "value_mgL"):
+            if key in out:
+                out["value"] = out[key]
+                break
+        out.setdefault("unit", (out.get("units") or {}).get("concentration",
+                                                           "mg/L"))
+    return out
+
+
+def result_quality(data: dict) -> Optional[dict]:
+    """A unit-reported error makes the observation bad and unusable."""
+    if data.get("error"):
+        return {"status": "bad", "flags": ["unit_error"], "permitted_use": "none"}
+    return None
 
 
 # -- one unit ---------------------------------------------------------------
@@ -237,12 +274,14 @@ class ShimUnit:
             except (ConnectionResetError, BrokenPipeError, OSError):
                 self.writer = None
 
-    def telem(self, kind, data, channel=None, command_id=None):
+    def telem(self, kind, data, channel=None, command_id=None, quality=None):
         self.local_seq += 1
-        asyncio.ensure_future(self._send(
-            {"t": "TELEM", "kind": kind, "channel": channel,
-             "command_id": command_id, "local_seq": self.local_seq,
-             "time": now_iso(), "data": data}))
+        msg = {"t": "TELEM", "kind": kind, "channel": channel,
+               "command_id": command_id, "local_seq": self.local_seq,
+               "time": now_iso(), "data": data}
+        if quality:
+            msg["quality"] = quality
+        asyncio.ensure_future(self._send(msg))
 
     def _hub_down(self, reason: str):
         if self.hub_up:
@@ -371,8 +410,10 @@ class ShimUnit:
             self.telem("observation", data, channel="detector_raw",
                        command_id=data.get("request_id"))
         elif subtopic == "results":
-            self.telem("observation", data, channel=self.analyte.lower(),
-                       command_id=data.get("request_id"))
+            self.telem("observation", normalise_result(data, self.analyte),
+                       channel=self.analyte.lower(),
+                       command_id=data.get("request_id"),
+                       quality=result_quality(data))
         elif subtopic == "heartbeat":
             self._note_clock(data.get("ts"))
             if self.clock_skew_s is not None:

@@ -10,6 +10,8 @@ Field episodes these encode (HRSD Nansemond, 2026-09-04):
   - a unit that lost power leaves a half-open socket; nothing may hang
   - the unit reboots on its own; the hub must re-adopt hands-off
   - the unit's clock was months behind
+  - the 2026-09 gateway build adds prime2 (ST9 35 then 88, 15 s) and
+    reports results as {vin, absorbance, fit, nh4_mgL, error}
 """
 from __future__ import annotations
 
@@ -211,23 +213,87 @@ class ShimPathTest(unittest.TestCase):
         self.assertTrue(st["ack"]["data"]["accepted"])
         self.assertEqual(st["result"]["data"]["status"], "succeeded")
         steps = [(p["pct"], p["message"]) for p in st["progress"]]
-        self.assertEqual(steps, [(30, "Sent ST9:11 (OK)"), (60, "Sent ST9:12 (OK)"),
-                                 (90, "Sent ST9:13 (OK)")],
+        self.assertEqual(steps, [(30, "Sent ST9:35 (OK)"), (60, "Sent ST9:40 (OK)"),
+                                 (90, "Sent ST9:41 (OK)")],
                          "progress must be forwarded once per distinct step")
         wait_for(lambda: f"prime {cid[:8]} succeeded in" in self.shim.log(),
                  timeout=5, what="one journal line for the command")
         wait_for(lambda: self.bench.module("nh4mod").get("module_state") == "idle",
                  what="module back to idle")
 
-    def test_rejected_outside_endpoint_is_one_terminal_result(self):
+    def test_prime2_is_the_short_prime(self):
         self.start_shim()
         self.start_unit()
         self.adopted()
-        st = self.done(self.cmd("prime"))          # BRIDGE mode: the unit refuses
+        declared = {c["type"]: c for c in
+                    get(self.bench.base, "/v1/modules/nh4mod/commands")["commands"]}
+        self.assertIn("prime2", declared)
+        self.assertEqual(declared["prime2"]["preconditions"], ["mode:ENDPOINT"])
+        self.done(self.cmd("take_control"))
+        cid = self.cmd("prime2")
+        st = self.done(cid)
+        self.assertEqual(st["result"]["data"]["status"], "succeeded")
+        self.assertEqual([(p["pct"], p["message"]) for p in st["progress"]],
+                         [(45, "Sent ST9:35 (OK)"), (90, "Sent ST9:88 (OK)")])
+        wait_for(lambda: f"prime2 {cid[:8]} succeeded in" in self.shim.log(),
+                 timeout=5, what="journal line")
+
+    def test_hub_prerejects_timeline_actions_outside_endpoint(self):
+        """Declared precondition: the hub answers 422 from what the heartbeat
+        told it, no round-trip to a unit that would only say no."""
+        self.start_shim()
+        self.start_unit()
+        self.adopted()
+        wait_for(lambda: self.bench.module("nh4mod").get("mode") == "BRIDGE",
+                 what="mode known")
+        for cmd_type in ("prime", "prime2", "sample"):
+            code, resp = post(self.bench.base, "/v1/commands",
+                              {"module": "nh4mod", "type": cmd_type,
+                               "params": {}, "actor": "user:local"})
+            self.assertEqual(code, 422, resp)
+            self.assertIn("requires mode=ENDPOINT", resp.get("detail", ""))
+        self.done(self.cmd("take_control"))           # mode commands still pass
+
+    def test_unit_side_rejection_is_one_terminal_result(self):
+        """When the unit itself refuses (queue busy), the shim turns the
+        rejection into one refused ACK and the hub into one 'rejected' result."""
+        self.start_shim()
+        self.start_unit(FAKE_SPEED=2)                 # prime takes ~12 s
+        self.adopted()
+        self.done(self.cmd("take_control"))
+        first = self.cmd("prime")
+        wait_for(lambda: get(self.bench.base, f"/v1/commands/{first}")["state"]
+                 == "running", what="first prime running")
+        st = self.done(self.cmd("prime2"), timeout=10)
         self.assertFalse(st["ack"]["data"]["accepted"])
         self.assertEqual(st["result"]["data"]["status"], "rejected")
-        self.assertIn("ENDPOINT", st["result"]["data"]["reason"])
-        self.assertIn("rejected: Not in ENDPOINT mode", self.shim.log())
+        self.assertEqual(st["result"]["data"]["reason"], "Action queue full")
+        self.assertIn("prime2", self.shim.log())
+        self.assertIn("rejected: Action queue full", self.shim.log())
+
+    def test_sample_result_carries_the_units_mgL_as_value(self):
+        """2026-09 result shape: nh4_mgL becomes `value`, fit and error ride
+        along; a calibration result is recorded with its fit."""
+        self.start_shim()
+        self.start_unit()
+        self.adopted()
+        self.done(self.cmd("take_control"))
+        self.assertEqual(self.done(self.cmd("calibrate", std_conc=5.0))
+                         ["result"]["data"]["status"], "succeeded")
+        self.assertEqual(self.done(self.cmd("sample"))["result"]["data"]["status"],
+                         "succeeded")
+
+        def unit_results():
+            items = get(self.bench.base,
+                        "/v1/observations?channel=nh4&module=nh4mod")["items"]
+            return [o for o in items if "nh4_mgL" in (o.get("data") or {})] or None
+        obs = wait_for(unit_results, timeout=10, what="unit sample result")[-1]
+        d = obs["data"]
+        self.assertEqual(d["value"], d["nh4_mgL"])
+        self.assertEqual(d["unit"], "mg/L")
+        self.assertAlmostEqual(d["value"], 4.5, delta=1.5)     # the sim's true conc
+        self.assertAlmostEqual(d["fit"]["slope"], 25.0, delta=1.0)
+        self.assertEqual(obs["quality"]["status"], "good")
 
     def test_config_validation_refuses_to_start_with_a_reason(self):
         bad = os.path.join(self.tmp, "bad.json")

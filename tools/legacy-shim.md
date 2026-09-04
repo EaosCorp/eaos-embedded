@@ -16,6 +16,10 @@ Source now lives at `~/Desktop/_cleanup-2026-07-15/zz-unclear/NH4MOD PROD4/`
 > (unmodified, just repointed at the hub box's broker) appear on the hub as
 > real modules. The mapping table below is its spec. pimod / the MCU
 > front-end remains the endstate; the shim retires unit-by-unit.
+>
+> **Gateway builds** we hold, dated by receipt, live in
+> `eaos-clients/hrsd/reference/arba-nh4mod-gateway/` (2026-03 multi-analyte; 2026-09 NH4 build
+> with `prime2` and `results` as `{vin, absorbance, fit, nh4_mgL, error}`).
 
 ## What the current system actually is
 
@@ -73,8 +77,8 @@ untouched while the evidence log starts accumulating on day one.
 
 ## Command set (confirmed from source)
 
-`take_control|endpoint`, `bridge`, `prime`, `calibrate` (params: std_conc,
-NOX also 5x/NO2 variants), `sample` — plus raw pass-through `cmd/{pi}/tx/port_a|b`
+`take_control|endpoint`, `bridge`, `prime`, `prime2` (2026-09 build: ST9 35 then 88,
+15 s), `calibrate` (params: std_conc, NOX also 5x/NO2 variants), `sample` — plus raw pass-through `cmd/{pi}/tx/port_a|b`
 (that pass-through must NOT survive into UII except as a dev-mode tool).
 
 Action queue depth today: 3. Rejections already exist ("Not in ENDPOINT

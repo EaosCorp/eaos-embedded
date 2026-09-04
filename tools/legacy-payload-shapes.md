@@ -14,7 +14,7 @@ beyond JSONL files on the Pi (`results.jsonl`, `adc_captures.jsonl`).
 
 `cmd/{pi_id}/action`
 ```json
-{"action": "take_control|endpoint|bridge|prime|calibrate|sample",
+{"action": "take_control|endpoint|bridge|prime|prime2|calibrate|sample",
  "request_id": "…",
  "std_conc": 5.0}                      // calibrate only
 ```
@@ -38,7 +38,7 @@ into UII.
 `tele/{pi_id}/action_status` — command lifecycle
 ```json
 {"ts": "...", "request_id": "...",
- "action": "prime|calibrate|sample|take_control|bridge",
+ "action": "prime|prime2|calibrate|sample|take_control|bridge",
  "state": "started|progress|completed|failed|rejected",
  "message": "Sent ST9:42 (OK)", "progress": 37,
  "extra": {"std_conc": 5.0}}           // optional params echo
@@ -121,3 +121,16 @@ knowledge is in the EZ-stepper command-set docs and the PLC ladder
 program, i.e. with Arba. Worth capturing at the bench (the historic
 `mosquitto_sub -t '#' -v` dump ask from the playbook covers the same
 ground from live traffic).
+
+## 2026-09 build differences (single-analyte NH4 `serial_mqtt_gateway.py`)
+
+- `prime2`: a 15 s short prime (ST9 35 at t=1, new ST9 88 at t=5). Same status states.
+- `results` on calibrate: `{ts, type:"calibration", units:{concentration:"mg/L"}, request_id,
+  std_conc_mgL, vin:{NH4_CAL_DIW_I0,...}, absorbance:{diw,std,log_base}, fit:{slope,intercept},
+  error}`; on sample: `{ts, type:"sample", units, request_id, cal_ts, vin:{NH4_SAMP_I0,I1},
+  absorbance:{sample,log_base}, fit, nh4_mgL, error}`. The shim copies `nh4_mgL` (or the older
+  `value_mgL`) into `value` and marks the observation bad when `error` is non-empty.
+- `run_summary` carries `state` + `error` instead of `err`.
+- heartbeat adds `uptime_s` and an `action` block `{running, name, request_id, elapsed_s,
+  total_s, progress, message}`.
+- Reference copies of both builds: `eaos-clients/hrsd/reference/arba-nh4mod-gateway/`.

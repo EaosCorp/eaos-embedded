@@ -26,4 +26,6 @@ outage or a half-open socket (unit lost power) is detected within 1.5 × `keepal
 reconnected; a hub restart re-adopts without touching the shim; PROGRESS is forwarded once per
 distinct step; a unit that never answers is NACKed after `ack_timeout_s`; the unit's heartbeat
 clock is compared with the hub's and surfaces as `clock_skew_s` in health. One journal line per
-command: type, id, outcome, duration.
+command: type, id, outcome, duration. Timeline actions (`prime`, `prime2`, `calibrate`, `sample`)
+declare `mode:ENDPOINT` as a precondition, so the hub answers 422 at once when the unit is in
+BRIDGE; `prime2` is the 2026-09 gateway's 15 s short prime (older builds answer 'Unknown action').

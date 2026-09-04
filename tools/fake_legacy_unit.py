@@ -1,13 +1,15 @@
 """A stand-in NH4MOD unit — the legacy MQTT gateway at the wire, simulated
 chemistry underneath.
 
-Same topics, action names, payload shapes, and mode semantics as
-serial_mqtt_gateway_nh4_nox_po4.py (A. Williamson, 2026-03): BRIDGE on
-boot, take_control latches ENDPOINT, prime/calibrate/sample rejected
-outside ENDPOINT, std_conc at the top level of the command payload,
-started/progress/completed/failed/rejected action_status states. Serial
-ports and the ADS1115 are replaced by refmod's hidden-slope physics, so a
-calibrate genuinely has to recover slope 25.
+Same topics, action names, payload shapes, and mode semantics as Arba's
+serial_mqtt_gateway.py (2026-09 NH4 build; ancestry in the 2026-03
+nh4_nox_po4 build): BRIDGE on boot, take_control latches ENDPOINT,
+prime/prime2/calibrate/sample rejected outside ENDPOINT, "Action queue
+full" while one runs, std_conc at the top level of the command payload,
+started/progress/completed/failed/rejected action_status states, results
+as {type, vin, absorbance, fit, nh4_mgL, error}. Serial ports and the
+ADS1115 are replaced by refmod's hidden-slope physics, so a calibrate
+genuinely has to recover slope 25.
 
 For bench-testing the mqtt-shim path with no unit on the LAN:
 
@@ -69,6 +71,8 @@ class FakeUnit:
         self.latched = False
         self.running = False
         self.slope = None            # recovered by calibrate, like the field
+        self.intercept = 0.0
+        self.cal_ts = None
         self.t0 = time.time()
         self._pending_i0: dict[str, float] = {}
         self.mqtt = MQTTClient(host, int(port),
@@ -141,7 +145,7 @@ class FakeUnit:
         if self.mode != "ENDPOINT":
             self.status(rid, action, "rejected", "Not in ENDPOINT mode", 0)
             return
-        if action in ("prime", "calibrate", "sample"):
+        if action in ("prime", "prime2", "calibrate", "sample"):
             if self.running:
                 self.status(rid, action, "rejected", "Action queue full", 0)
                 return
@@ -154,6 +158,8 @@ class FakeUnit:
         try:
             if action == "prime":
                 await self.run_prime(rid)
+            elif action == "prime2":
+                await self.run_prime2(rid)
             elif action == "calibrate":
                 std_conc = float(obj.get("std_conc", 0.0))
                 if std_conc <= 0:
@@ -167,12 +173,22 @@ class FakeUnit:
             self.running = False
 
     async def run_prime(self, rid):
+        # the real timeline: ST9 35 @6s, 40 @14s, 41 @197s, 300 s total
         self.status(rid, "prime", "started", "prime started", 0)
-        for i, st9 in enumerate((11, 12, 13), 1):
+        for i, st9 in enumerate((35, 40, 41), 1):
             await asyncio.sleep(8 / self.speed)
             self.status(rid, "prime", "progress",
                         f"Sent ST9:{st9} (OK)", int(i * 30))
         self.status(rid, "prime", "completed", "Prime complete", 100)
+
+    async def run_prime2(self, rid):
+        # the 2026-09 short prime: ST9 35 @1s, 88 @5s, 15 s total
+        self.status(rid, "prime2", "started", "prime2 started", 0)
+        for i, st9 in enumerate((35, 88), 1):
+            await asyncio.sleep(4 / self.speed)
+            self.status(rid, "prime2", "progress",
+                        f"Sent ST9:{st9} (OK)", int(i * 45))
+        self.status(rid, "prime2", "completed", "Prime2 complete", 100)
 
     async def run_calibrate(self, rid, std_conc):
         a = self.analyte
@@ -195,15 +211,20 @@ class FakeUnit:
             self.status(rid, "calibrate", "failed", "flat calibration", 95, echo)
             return
         self.slope = std_conc / denom
-        result = {"ts": now_iso(), "type": "calibration", "pi_id": self.pi_id,
-                  "request_id": rid, "analyte": a,
-                  "slope_mgL_per_A": round(self.slope, 4),
-                  "blank_absorbance": round(a_diw, 6),
-                  "std_conc_mgL": std_conc, "complete": True}
+        self.intercept = -self.slope * a_diw
+        self.cal_ts = now_iso()
+        result = {"ts": self.cal_ts, "type": "calibration",
+                  "units": {"concentration": "mg/L"}, "request_id": rid,
+                  "std_conc_mgL": std_conc, "vin": caps,
+                  "absorbance": {"diw": round(a_diw, 6), "std": round(a_std, 6),
+                                 "log_base": 10},
+                  "fit": {"slope": round(self.slope, 4),
+                          "intercept": round(self.intercept, 6)},
+                  "error": ""}
         self.pub("results", result)
         self.pub("run_summary", {"ts": now_iso(), "request_id": rid,
-                                 "action": "calibrate", "err": None,
-                                 "std_conc_mgL": std_conc})
+                                 "action": "calibrate", "state": "completed",
+                                 "std_conc_mgL": std_conc, "error": ""})
         self.status(rid, "calibrate", "completed", "Calibration complete", 100,
                     echo)
 
@@ -222,13 +243,19 @@ class FakeUnit:
             self.status(rid, "sample", "progress", f"Captured {name}",
                         int(i * 45))
         absorbance = math.log10(caps[f"{a}_SAMP_I0"] / caps[f"{a}_SAMP_I1"])
-        value = self.slope * absorbance
-        self.pub("results", {"ts": now_iso(), "type": "sample_result",
-                             "pi_id": self.pi_id, "request_id": rid,
-                             "analyte": a, "absorbance": round(absorbance, 6),
-                             "value_mgL": round(value, 4)})
+        value = self.slope * absorbance + self.intercept
+        self.pub("results", {"ts": now_iso(), "type": "sample",
+                             "units": {"concentration": "mg/L"},
+                             "request_id": rid, "cal_ts": self.cal_ts,
+                             "vin": caps,
+                             "absorbance": {"sample": round(absorbance, 6),
+                                            "log_base": 10},
+                             "fit": {"slope": round(self.slope, 4),
+                                     "intercept": round(self.intercept, 6)},
+                             f"{a.lower()}_mgL": round(value, 4), "error": ""})
         self.pub("run_summary", {"ts": now_iso(), "request_id": rid,
-                                 "action": "sample", "err": None})
+                                 "action": "sample", "state": "completed",
+                                 "error": ""})
         self.status(rid, "sample", "completed",
                     f"{a} = {value:.3f} mg/L", 100)
 
