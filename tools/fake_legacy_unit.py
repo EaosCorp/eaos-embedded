@@ -11,8 +11,20 @@ calibrate genuinely has to recover slope 25.
 
 For bench-testing the mqtt-shim path with no unit on the LAN:
 
-  FAKE_PI_ID=nh4mod-01 FAKE_ANALYTE=NH4 FAKE_BROKER=127.0.0.1:1883 \
+  FAKE_PI_ID=nh4mod FAKE_ANALYTE=NH4 FAKE_BROKER=127.0.0.1:1883 \
   FAKE_SPEED=30 python3 tools/fake_legacy_unit.py
+
+Field-faithful knobs (all optional):
+  FAKE_PROGRESS_REPEAT=N   re-publish each progress step N times, like the
+                           real gateway does about once a second (shim must
+                           forward it once)
+  FAKE_DEAF=1              heartbeats only; never answers a command (the
+                           shim must NACK after its ack timeout)
+  FAKE_CLOCK_OFFSET_S=-3600  shift every `ts` (the field unit's clock was
+                           found months behind)
+  FAKE_HEARTBEAT_S=1.0     heartbeat period (default 10/speed, min 0.5)
+  FAKE_KEEPALIVE_S=30      MQTT keepalive (the unit drops a silent broker
+                           after 1.5x this)
 """
 from __future__ import annotations
 
@@ -33,18 +45,26 @@ TRUE_SLOPE = 25.0
 I0_VOLTS = 2.400
 
 
+CLOCK_OFFSET_S = float(os.environ.get("FAKE_CLOCK_OFFSET_S", 0) or 0)
+
+
 def now_iso() -> str:
-    return (time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime())
-            + f".{int(time.time()*1000)%1000:03d}Z")
+    t = time.time() + CLOCK_OFFSET_S
+    return (time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(t))
+            + f".{int(t*1000)%1000:03d}Z")
 
 
 class FakeUnit:
     def __init__(self):
         e = os.environ
-        self.pi_id = e.get("FAKE_PI_ID", "nh4mod-01")
+        self.pi_id = e.get("FAKE_PI_ID", "nh4mod")
         self.analyte = e.get("FAKE_ANALYTE", "NH4")
         host, port = e.get("FAKE_BROKER", "127.0.0.1:1883").rsplit(":", 1)
         self.speed = max(float(e.get("FAKE_SPEED", 30)), 1e-6)
+        self.progress_repeat = max(int(e.get("FAKE_PROGRESS_REPEAT", 1)), 1)
+        self.deaf = e.get("FAKE_DEAF", "") not in ("", "0")
+        self.heartbeat_s = float(e.get("FAKE_HEARTBEAT_S", 0) or
+                                 max(0.5, 10 / self.speed))
         self.mode = "BRIDGE"
         self.latched = False
         self.running = False
@@ -53,7 +73,8 @@ class FakeUnit:
         self._pending_i0: dict[str, float] = {}
         self.mqtt = MQTTClient(host, int(port),
                                client_id=f"{self.pi_id}-gateway",
-                               on_message=self.on_message)
+                               on_message=self.on_message,
+                               keepalive=float(e.get("FAKE_KEEPALIVE_S", 30)))
 
     # -- physics (refmod's) --------------------------------------------------
 
@@ -85,7 +106,9 @@ class FakeUnit:
              "state": state, "message": message, "progress": int(progress)}
         if extra:
             p["extra"] = extra
-        self.pub("action_status", p)
+        repeats = self.progress_repeat if state == "progress" else 1
+        for _ in range(repeats):
+            self.pub("action_status", p)
 
     def adc_capture(self, rid, action, name, vin):
         self.pub("data", {"ts": now_iso(), "type": "adc_capture",
@@ -98,7 +121,7 @@ class FakeUnit:
     # -- command handling (mirrors _on_message + the worker) -----------------
 
     def on_message(self, topic, payload):
-        if topic != f"cmd/{self.pi_id}/action":
+        if topic != f"cmd/{self.pi_id}/action" or self.deaf:
             return
         try:
             obj = json.loads(payload.decode())
@@ -218,13 +241,17 @@ class FakeUnit:
                                    "uptime_s": int(time.time() - self.t0),
                                    "port_a_ok": True, "port_b_ok": True,
                                    "action_running": self.running})
-            await asyncio.sleep(max(0.5, 10 / self.speed))
+            await asyncio.sleep(self.heartbeat_s)
 
     async def run(self):
         await self.mqtt.subscribe(f"cmd/{self.pi_id}/action")
         print(f"[fake-unit] {self.pi_id} ({self.analyte}) · broker "
               f"{self.mqtt.host}:{self.mqtt.port} · speed {self.speed}x · "
-              f"mode {self.mode}")
+              f"mode {self.mode}"
+              f"{' · deaf' if self.deaf else ''}"
+              f"{f' · progress x{self.progress_repeat}' if self.progress_repeat > 1 else ''}"
+              f"{f' · clock {CLOCK_OFFSET_S:+.0f}s' if CLOCK_OFFSET_S else ''}",
+              flush=True)
         asyncio.ensure_future(self.heartbeat_loop())
         await self.mqtt.run()
 

@@ -2,8 +2,12 @@
   "hub": "127.0.0.1:7300",
   "broker": "127.0.0.1:1883",
   "offline_after_s": 90,
+  "ack_timeout_s": 15,
+  "keepalive_s": 30,
+  "clock_skew_warn_s": 300,
   "units": {
-    "nh4mod-01": {"slot": "slot-1", "analyte": "NH4",
-                  "serial": "NH4MOD-LEGACY-0001"}
+    "nh4mod": {"slot": "slot-1", "analyte": "NH4",
+               "serial": "NH4MOD-LEGACY-0001",
+               "broker": "192.168.1.50:1883"}
   }
 }
