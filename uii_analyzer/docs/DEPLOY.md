@@ -125,3 +125,21 @@ The evidence DB is the whole story — commands, acks, raw volts, states,
 health, identity transitions — hash-chained, so nothing is missing and
 nothing can have been edited. Attach it; the bug becomes reproducible on
 the software bench against the simulator.
+
+## 6. Gateway-only hub with legacy units (the HRSD shape)
+
+When the hub box has no analyzer of its own and the units still run the legacy MQTT gateway:
+
+```sh
+sudo ./deploy/install.sh --site hrsd-nans        # or without --site; edit /etc/uii/mqtt-shim.json
+sudo systemctl enable --now uii-hub uii-mqtt-shim
+uii doctor                                       # services · brokers · heard vs configured · hub view
+```
+
+`deploy/sites/<site>/` carries what is specific to a box (network addresses, the shim config,
+the broker choice) so a re-image reproduces it; `deploy/sync-hrsd-hub.sh` pushes this checkout,
+re-runs the installer, restarts the services and ends with `uii doctor`. Field verification after
+any change: reboot the hub (`systemctl --failed` empty, doctor PASS, module OPERATIONAL within
+60 s), power-cycle the unit (BYE, then re-adopt with no hands on the hub), restart `uii-hub`
+(module back within 10 s), then `take_control` → `prime` → `bridge` with one ACK, changing
+PROGRESS and one RESULT each.

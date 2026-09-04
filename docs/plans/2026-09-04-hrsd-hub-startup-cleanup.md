@@ -4,6 +4,10 @@ Plan written 2026-09-04 after the field check on `hrsd-nans-rpiplc-01`. The code
 box is byte-identical to this working tree (md5-checked), so every fix below lands here
 first and is synced out.
 
+**Status (2026-09-04, same day):** phases 0–6 built and tested (`tests/test_mqtt_shim.py`,
+11 cases on a real mosquitto); phase 7 waits on the unit's login; phase 8 runs at the next
+sync (`deploy/sync-hrsd-hub.sh`).
+
 ## What the field check taught us
 
 - The NH4MOD unit is on **eth0** (plant LAN) at **192.168.1.50**, not on eth1 (the instrument
