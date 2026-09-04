@@ -1,0 +1,11 @@
+[Unit]
+Description=Publish BFP dose results to Cosmos/blob (review frames + keyframes, budget-capped)
+After=uii-vision.service network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/eaos/uii-analyzer
+Environment=PYTHONPATH=/opt/eaos/uii-analyzer
+Environment=BFP_EQUIPMENT_ID=A4 BFP_PUB_KEY_EVERY_H=2 BFP_PUB_MAX_REVIEW=10 UII_TZ_OFFSET_H=-4
+ExecStart=/opt/eaos/venv/bin/python -m extensions.vision.tools.bfp_publish
+Nice=10

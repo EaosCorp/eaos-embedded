@@ -35,14 +35,37 @@
 
 ---
 
-## 1. Draw the box (the ROI)
+## 1. Draw the outline (the ROI)
+
+> **2026-08-23: ROIs are polygons now.** A viewpoint's ROI is a set of named
+> polygons, one per basin / channel, as fractional vertices:
+> `{"polygons": {"basin-west": [[x, y], ...], "basin-east": [...]}}`. The box
+> reads it from `/etc/eaos/vision-roi.json` (`UII_ROI_FILE`); canonical copies
+> live in `uii_vision/config/roi/<hostname>.json`. Trace the **water surface
+> only**: railings, walkways and mixer platforms are bright and read as foam
+> to the threshold detector. Every `foam_coverage` observation reports the
+> union plus a `regions` breakdown, so one foaming basin is visible on its own.
+> The rectangle form (`x0,y0,x1,y1`) still works for a quick start. To draw:
+> open a frame in a click-to-trace tool, copy the normalised JSON, validate
+> with `tests/test_vision.py::PolygonRoiTest`.
+
+
 
 The ROI is the rectangle the CV measures inside. For foam it is the stretch of
 **water surface** you care about, with the walls, walkways, handrails, sky, and
 fixed reflections left *out* (those are what produce false coverage).
 
 1. **Aim and focus** the camera at the surface, then lock the mount. Any later
-   pan/tilt/zoom invalidates the ROI and forces a re-baseline.
+   pan/tilt/zoom invalidates the ROI and forces a re-baseline. While aiming,
+   pull a fresh view each time from a laptop on the tailnet — an on-demand
+   grab then the frame:
+   ```
+   POST /v1/commands  {"module":"campod-01","type":"capture"}     # operator token
+   GET  /v1/modules/campod-01/frame                                # viewer token
+   ```
+   (`/frame` is `no-store`, so a browser tab on it refreshes to the newest one.)
+   Get the camera on UTC before you start: the on-image timestamp is what you
+   will compare against evidence times later.
 2. **Grab a reference frame** to draw on:
    ```
    GET /v1/modules/<id>/frame?full=1     # the stored frame, ~200 KB
@@ -222,4 +245,5 @@ new system. See `level_cv.py`'s footer for the code wiring checklist.
 | weir datum | role `level.weir_crest_frac` | fraction |
 | action levels | `hub.json` `detections` | see §4 / `detections.md` |
 | qualify for control | role `control_ok` | `true`/`false` (default false) |
-| fetch a frame | `GET /v1/modules/<id>/frame` | `?w=`, `?q=`, `?full=1` |
+| fetch a frame | `GET /v1/modules/<id>/frame` | `?w=`, `?q=`, `?full=1`; `no-store`; `X-Frame-Hash`/`X-Frame-Time`; `HEAD` ok |
+| frame by hash | `GET /v1/frames/<sha256>` | same params; `immutable` |

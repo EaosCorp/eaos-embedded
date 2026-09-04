@@ -153,11 +153,84 @@ class HTTPSnapshotSource:
         return rgb, {"source": "reolink-http", "w": w, "h": h}
 
 
+class GoProSnapshotSource:
+    """Open GoPro HTTP capture: health-check the SD card, fire the shutter,
+    download the newest photo, delete it from the camera. The sequence is the
+    proven one from gopro-capture-v3.sh on the Blue Plains Pi (status fields
+    33/54/111/117 = storage state / remaining KB / write-speed error /
+    capacity KB). A grab raises RuntimeError with a health reason when the
+    camera or its SD card is not usable; campod treats that as a failed grab,
+    never a crash, so a dead camera just means no frames until it is fixed."""
+
+    def __init__(self, host="10.5.5.9", port=8080, timeout=20):
+        self.host, self.port, self.timeout = host, int(port), timeout
+        self.base = f"http://{self.host}:{self.port}"
+
+    @classmethod
+    def from_env(cls, env=None):
+        e = env or os.environ
+        return cls(e.get("CAMERA_HOST", "10.5.5.9"), e.get("GOPRO_PORT", "8080"))
+
+    def _json(self, path):
+        import json as _json
+        with urllib.request.urlopen(self.base + path, timeout=self.timeout) as r:
+            return _json.loads(r.read().decode())
+
+    def _health(self):
+        st = self._json("/gopro/camera/state").get("status", {})
+        storage, remaining = int(st.get("33", -1)), int(st.get("54", 0))
+        wr_err, capacity = int(st.get("111", 1)), int(st.get("117", 0))
+        if storage != 0:
+            raise RuntimeError(f"gopro-health: storage status={storage} (SD missing/error)")
+        if remaining <= 0 or capacity <= 0:
+            raise RuntimeError(f"gopro-health: invalid SD capacity (remaining_kb={remaining}, capacity_kb={capacity})")
+        if wr_err:
+            raise RuntimeError("gopro-health: SD write-speed error (status.111)")
+
+    def _newest(self):
+        media = self._json("/gopro/media/list").get("media", [])
+        latest = None
+        for d in media:
+            for f in d.get("fs", []):
+                key = (int(f.get("cre", 0)), f.get("n", ""))
+                if latest is None or key > (latest[0], latest[1]):
+                    latest = (key[0], f.get("n", ""), d.get("d", ""))
+        return latest
+
+    def grab(self, command=None):
+        import time as _time
+        self._health()
+        before = self._newest()
+        with urllib.request.urlopen(self.base + "/gopro/camera/shutter/start", timeout=self.timeout) as r:
+            r.read()
+        photo = None
+        for _ in range(20):                    # up to ~20 s for the file to land
+            _time.sleep(1.0)
+            latest = self._newest()
+            if latest and latest != before:
+                photo = latest; break
+        if not photo:
+            raise RuntimeError("gopro: shutter fired but no new media appeared")
+        _, name, dirname = photo
+        with urllib.request.urlopen(f"{self.base}/videos/DCIM/{dirname}/{name}", timeout=60) as r:
+            data = r.read()
+        try:
+            urllib.request.urlopen(f"{self.base}/gopro/media/delete/file?path={dirname}/{name}",
+                                   timeout=self.timeout).read()
+        except OSError:
+            pass                               # a leftover file is cleaned next health cycle
+        rgb = decode(data)
+        return rgb, {"source": "gopro-http", "w": rgb.shape[1], "h": rgb.shape[0],
+                     "camera_file": f"{dirname}/{name}"}
+
+
 def make_source(env=None):
-    """UII_SIM=1 -> sim; else the Reolink HTTP snapshot from the env creds."""
+    """UII_SIM=1 -> sim; CAMERA_KIND=gopro -> GoPro; else Reolink snapshot."""
     e = env or os.environ
     if e.get("UII_SIM") in ("1", "true", "yes"):
         return SimFrameSource(coverage_pct=float(e.get("UII_SIM_COVERAGE", 25.0)),
                               foam_type=e.get("UII_SIM_FOAM", "nuisance_white"),
                               quality=float(e.get("UII_SIM_QUALITY", 1.0)))
+    if e.get("CAMERA_KIND", "reolink").lower() == "gopro":
+        return GoProSnapshotSource.from_env(e)
     return HTTPSnapshotSource.from_env(e)

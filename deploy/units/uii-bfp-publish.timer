@@ -1,0 +1,9 @@
+[Unit]
+Description=Run the BFP publisher hourly at :12
+
+[Timer]
+OnCalendar=*-*-* *:12:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,9 @@
+[Unit]
+Description=Run the UII vision digest daily (04:20 UTC = 00:20 EDT)
+
+[Timer]
+OnCalendar=*-*-* 04:20:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

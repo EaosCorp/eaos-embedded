@@ -30,7 +30,17 @@ GET /v1/modules/<id>/frame           # latest frame, ~40-80 KB (1280 wide, q70)
 GET /v1/frames/<sha256>              # a specific frame by hash
     ?w=960 ?q=60                     # smaller: ~15-40 KB
     ?full=1                          # the stored frame (~200 KB), opt-in only
+HEAD <either>                        # same status + headers, no body
 ```
+
+Both routes answer with `X-Frame-Hash` (sha256 of the stored frame) and, on
+the per-module route, `X-Frame-Time` (the frame envelope's time), so a caller
+can tell *which* frame it got without decoding it. Caching is deliberate:
+`/v1/frames/<sha256>` is content-addressed and served `immutable`;
+`/v1/modules/<id>/frame` is `no-store`, so a browser tab or `<img>` on that URL
+refreshes to the newest frame instead of pinning the first one it saw.
+`HEAD` works on every GET route (a probe on `/frame` is a cheap liveness
+check) except the SSE stream `/v1/events` (405).
 
 The CV always runs on the local full-quality frame on the box (no transfer);
 only these fetches cross the wire, and only as small as you ask.
@@ -52,7 +62,21 @@ curl -H "Authorization: Bearer <viewer-token>" \
 ```
 
 No tokens file => open mode (localhost dev / tests). Set
-`UII_API_BIND=127.0.0.1` to keep the API local-only.
+`UII_API_BIND=127.0.0.1` to keep the API local-only. For a browser or a
+dashboard `<img>` the token may ride in the query string
+(`/v1/modules/campod-01/frame?token=<viewer>`); fine on the tailnet, but URLs
+get logged, so use the viewer token there, never the operator one.
+
+## Deploying to an edge box
+
+`deploy/sync-dcwa-edge.sh [host ...]` rsyncs this checkout onto the DC Water
+edge boxes in their installed layout (`/opt/eaos/uii-analyzer`, vision under
+`extensions/vision/`), keeps replaced files in a dated `.bak-` dir, byte-compiles,
+restarts `uii-vision.service`, and probes `/.well-known/uii`. `DRY=1` previews.
+It never touches `/etc/eaos` (creds, tokens) or `/var/lib/eaos` (frames,
+evidence). Site specifics — camera DHCP reservations, cadence drop-in, box and
+camera time sync — are ops units on the boxes, documented in the vault
+(`01-company/credentials/dc-water/dcwa-blue-plains-edge-computers.md`).
 
 ## Commissioning (aim it at a real basin)
 

@@ -51,11 +51,21 @@ def main():
     cadence = os.environ.get("UII_CADENCE_S", "15")
     os.makedirs(data_dir, exist_ok=True)
 
+    role = {"role": os.environ.get("UII_ROLE", "aeration-foam-cam"),
+            "cadence_s": float(cadence), "control_ok": False}
+    # Site ROI: the commissioned outlines of the basins/channels this camera
+    # watches, as fractional polygons ({"polygons": {name: [[x, y], ...]}}).
+    # Lives next to the camera credentials, never in the image; absent = whole
+    # frame. Canonical copies: uii_vision/config/roi/<hostname>.json.
+    roi_path = os.environ.get("UII_ROI_FILE", "/etc/eaos/vision-roi.json")
+    if os.path.exists(roi_path):
+        with open(roi_path) as f:
+            role["roi"] = json.load(f)
+        n = len((role["roi"].get("polygons") or {}))
+        print(f"[uii-vision] roi {roi_path}: {n} polygon(s)", flush=True)
     cfg = {"hub_id": os.environ.get("UII_HUB_ID", "hub-edge-01"),
            "allowed_types": ["vision-cam"], "extensions": ["vision"],
-           "data_dir": data_dir,
-           "roles": {slot: {"role": "aeration-foam-cam",
-                            "cadence_s": float(cadence), "control_ok": False}}}
+           "data_dir": data_dir, "roles": {slot: role}}
     cfgp = os.path.join(data_dir, "hub.json")
     with open(cfgp, "w") as f:
         json.dump(cfg, f)

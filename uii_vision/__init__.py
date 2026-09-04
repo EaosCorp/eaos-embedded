@@ -31,16 +31,27 @@ def _int(v, default):
         return default
 
 
-def _serve_jpeg(handler, data, q):
+def _serve_jpeg(handler, data, q, *, immutable, digest=None, frame_time=None):
     """Serve a stored frame small by default (cellular). ?full=1 for original,
-    ?w=<px> to cap width, ?q=<1-95> for quality."""
+    ?w=<px> to cap width, ?q=<1-95> for quality.
+
+    immutable=True only for content-addressed URLs (/v1/frames/<sha256>); the
+    per-module "latest" URL must be no-store or a browser tab keeps showing
+    the same frame forever. X-Frame-Hash / X-Frame-Time tell the caller which
+    frame it actually got (also on HEAD)."""
     full = q.get("full") in ("1", "true", "yes")
     out = data if full else recompress(data, max_w=_int(q.get("w"), 1280),
                                        quality=_int(q.get("q"), 70))
     handler.send_response(200)
     handler.send_header("Content-Type", "image/jpeg")
     handler.send_header("Content-Length", str(len(out)))
-    handler.send_header("Cache-Control", "public, max-age=31536000, immutable")
+    handler.send_header("Cache-Control",
+                        "public, max-age=31536000, immutable" if immutable
+                        else "no-store")
+    if digest:
+        handler.send_header("X-Frame-Hash", digest)
+    if frame_time:
+        handler.send_header("X-Frame-Time", frame_time)
     handler.end_headers()
     handler.wfile.write(out)
 
@@ -50,7 +61,7 @@ def _frame_routes(store, blobs):
         data = blobs.get(m.group(1))
         if not data:
             return handler._problem(404, "urn:uii:problem:not-found", "no such frame")
-        _serve_jpeg(handler, data, q)
+        _serve_jpeg(handler, data, q, immutable=True, digest=m.group(1))
 
     def latest(handler, m, q):
         obs = store.latest_observation(m.group(1), "frames")
@@ -58,7 +69,8 @@ def _frame_routes(store, blobs):
         data = blobs.get(digest) if digest else None
         if not data:
             return handler._problem(404, "urn:uii:problem:not-found", "no frame for module")
-        _serve_jpeg(handler, data, q)
+        _serve_jpeg(handler, data, q, immutable=False, digest=digest,
+                    frame_time=(obs or {}).get("time"))
 
     return by_hash, latest
 

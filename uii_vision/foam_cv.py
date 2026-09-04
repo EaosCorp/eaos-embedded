@@ -68,6 +68,59 @@ def rect_roi(shape, x0=0.0, y0=0.0, x1=1.0, y1=1.0) -> np.ndarray:
     return mask
 
 
+def polygon_roi(shape, polygons) -> np.ndarray:
+    """Boolean HxW ROI = union of polygons given as fractional vertices
+    [[x, y], ...] (0..1). `polygons` may be a list of polygons or a dict
+    name -> polygon. Even-odd ray casting, vectorised over the pixel grid, so
+    concave outlines (a channel notched around a mixer platform) work. Pure
+    numpy; a 1920x1080 frame with a dozen edges rasterises in ~50 ms."""
+    h, w = shape[0], shape[1]
+    mask = np.zeros((h, w), dtype=bool)
+    polys = list(polygons.values()) if isinstance(polygons, dict) else list(polygons or [])
+    if not polys:
+        return mask
+    ys = (np.arange(h, dtype=np.float64) + 0.5)[:, None]
+    xs = (np.arange(w, dtype=np.float64) + 0.5)[None, :]
+    for poly in polys:
+        pts = [(float(x) * w, float(y) * h) for x, y in poly]
+        if len(pts) < 3:
+            continue
+        inside = np.zeros((h, w), dtype=bool)
+        n = len(pts)
+        for i in range(n):
+            (x0, y0), (x1, y1) = pts[i], pts[(i + 1) % n]
+            if y0 == y1:
+                continue
+            # rows whose centre lies between the edge's y extents (half-open)
+            rows = ((ys >= min(y0, y1)) & (ys < max(y0, y1)))
+            # x of the edge at each row's centre
+            xi = x0 + (ys - y0) * (x1 - x0) / (y1 - y0)
+            inside ^= rows & (xs < xi)
+        mask |= inside
+    return mask
+
+
+def build_roi(shape, roi) -> np.ndarray | None:
+    """Turn an ROI spec into a mask. Accepts None (whole frame), a rectangle
+    as (x0, y0, x1, y1) or {"x0","y0","x1","y1"}, or {"polygons": {...}}."""
+    if roi is None:
+        return None
+    if isinstance(roi, dict):
+        if roi.get("polygons"):
+            return polygon_roi(shape, roi["polygons"])
+        if {"x0", "y0", "x1", "y1"} <= set(roi):
+            return rect_roi(shape, roi["x0"], roi["y0"], roi["x1"], roi["y1"])
+        return None
+    return rect_roi(shape, *roi)
+
+
+def region_masks(shape, roi) -> dict[str, np.ndarray]:
+    """Per-region masks for a polygon ROI ({name: mask}); empty otherwise."""
+    if isinstance(roi, dict) and isinstance(roi.get("polygons"), dict):
+        return {k: polygon_roi(shape, [v]) for k, v in roi["polygons"].items()}
+    return {}
+
+
 def _sharpness(v: np.ndarray, roi: np.ndarray) -> float:
     """Mean gradient energy inside the ROI — a focus/blur proxy."""
     gx = np.abs(np.diff(v, axis=1))

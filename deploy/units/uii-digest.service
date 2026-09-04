@@ -1,0 +1,10 @@
+[Unit]
+Description=UII vision daily frame digest (the few frames worth sending over cellular)
+After=uii-vision.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/eaos/uii-analyzer
+Environment=UII_DIGEST_MAX=50 UII_DIGEST_KEY_EVERY_H=1 UII_TZ_OFFSET_H=-4
+ExecStart=/usr/bin/python3 -m extensions.vision.tools.digest
+Nice=10

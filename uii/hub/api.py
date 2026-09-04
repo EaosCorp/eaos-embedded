@@ -209,6 +209,43 @@ def make_handler(hub):
 
             return self._problem(404, "urn:uii:problem:not-found", path)
 
+        # -- HEAD -------------------------------------------------------------
+
+        def do_HEAD(self):
+            """Same status + headers as GET, no body. Without this the stdlib
+            answers 501 with an HTML body, which confuses `curl -I`, uptime
+            probes and browsers pre-flighting an <img>. Runs do_GET with a
+            writer that forwards the header block and swallows the body."""
+            if urlparse(self.path).path == "/v1/events":       # SSE never ends
+                return self._problem(405, "urn:uii:problem:method-not-allowed",
+                                     "HEAD not supported on the event stream")
+            real, handler = self.wfile, self
+
+            class HeadersOnly:
+                body = False
+
+                def write(self, b):
+                    if not self.body:
+                        real.write(b)
+                    return len(b)
+
+                def flush(self):
+                    real.flush()
+
+            w = HeadersOnly()
+            end_headers = self.end_headers
+
+            def end_headers_then_mute():
+                end_headers()               # flushes the header block via w
+                w.body = True
+
+            self.wfile, self.end_headers = w, end_headers_then_mute
+            try:
+                self.do_GET()
+            finally:
+                self.wfile = real
+                del self.end_headers
+
         # -- POST -------------------------------------------------------------
 
         def do_POST(self):

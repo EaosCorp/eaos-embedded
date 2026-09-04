@@ -1,0 +1,11 @@
+[Unit]
+Description=UII vision frame-store retention sweep (30 d full-res, 90 d at 1/10 min, digest kept)
+After=uii-digest.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/eaos/uii-analyzer
+Environment=UII_RETAIN_FULL_DAYS=30 UII_RETAIN_THIN_DAYS=90 UII_RETAIN_THIN_MIN=10 UII_RETAIN_MIN_FREE_PCT=15
+ExecStart=/usr/bin/python3 -m extensions.vision.tools.retain
+Nice=15
+IOSchedulingClass=idle
