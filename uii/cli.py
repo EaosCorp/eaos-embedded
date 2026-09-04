@@ -34,10 +34,14 @@ otherwise a clean not-found error):
   uii evidence [--kind k] [--module m] [--limit n]
   uii lineage EVIDENCE_ID             causal graph around one record
 
-  --hub URL (default $UII_HUB_URL or http://127.0.0.1:8400)
-  --json    machine output on any verb
+  uii doctor [--listen-s 12]          site health in one screen: services,
+                                      brokers, units heard vs configured,
+                                      hub view, clocks (analyzer piece)
 
-Exit codes: 0 ok · 2 rejected · 3 failed.
+  --hub URL (default $UII_HUB_URL or http://127.0.0.1:8400)
+  --json    machine output on any verb; before or after the verb
+
+Exit codes: 0 ok · 2 rejected · 3 failed · 4 hub unreachable.
 """
 from __future__ import annotations
 
@@ -58,6 +62,12 @@ def _headers(extra=None) -> dict:
     return h
 
 
+def _unreachable(base: str, e: Exception):
+    print(f"hub unreachable at {base}: {getattr(e, 'reason', e)} "
+          f"(is uii-hub running? --hub / $UII_HUB_URL)", file=sys.stderr)
+    raise SystemExit(4)
+
+
 def _get(base: str, path: str) -> dict:
     req = urllib.request.Request(base + path, headers=_headers())
     try:
@@ -69,6 +79,8 @@ def _get(base: str, path: str) -> dict:
               if e.code == 404 else f"error {e.code}: {detail}",
               file=sys.stderr)
         raise SystemExit(3)
+    except urllib.error.URLError as e:
+        _unreachable(base, e)
 
 
 def _post(base: str, path: str, body: dict) -> tuple[int, dict]:
@@ -80,6 +92,8 @@ def _post(base: str, path: str, body: dict) -> tuple[int, dict]:
             return r.status, json.loads(r.read())
     except urllib.error.HTTPError as e:
         return e.code, json.loads(e.read() or b"{}")
+    except urllib.error.URLError as e:
+        _unreachable(base, e)
 
 
 _JSON = False   # set by --json: agents get structure, humans get tables
@@ -98,6 +112,16 @@ def _table(rows: list[dict], cols: list[str]):
         print("  ".join(str(r.get(c, "")).ljust(widths[c]) for c in cols))
 
 
+class _SubParser(argparse.ArgumentParser):
+    """Subparser that inherits the common flags (see main)."""
+    common = None
+
+    def __init__(self, *args, **kw):
+        if self.common is not None:
+            kw.setdefault("parents", []).append(self.common)
+        super().__init__(*args, **kw)
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(prog="uii", description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -107,7 +131,14 @@ def main(argv=None):
                         "your identity from this, not from --actor")
     p.add_argument("--json", action="store_true",
                    help="machine-readable output (any verb)")
-    sub = p.add_subparsers(dest="verb", required=True)
+    # the same three flags are accepted after the verb too (`uii modules --json`);
+    # SUPPRESS keeps a subparser from overwriting a value given before the verb
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument("--hub", default=argparse.SUPPRESS)
+    common.add_argument("--token", default=argparse.SUPPRESS)
+    common.add_argument("--json", action="store_true", default=argparse.SUPPRESS)
+    sub = p.add_subparsers(dest="verb", required=True, parser_class=_SubParser)
+    _SubParser.common = common
 
     sub.add_parser("system")
     sub.add_parser("modules")
@@ -144,6 +175,12 @@ def main(argv=None):
     s.add_argument("--kind"); s.add_argument("--module")
     s.add_argument("--limit", type=int, default=25)
     s = sub.add_parser("lineage"); s.add_argument("id")
+    s = sub.add_parser("doctor", help="site health: services, brokers, "
+                                       "heard-vs-configured units, hub view")
+    s.add_argument("--config", help="shim config (default $UII_SHIM_CONFIG "
+                                    "or /etc/uii/mqtt-shim.json)")
+    s.add_argument("--listen-s", type=float, default=12.0,
+                   help="seconds to listen for unit heartbeats")
 
     a = p.parse_args(argv)
     global _JSON, _TOKEN
@@ -151,6 +188,16 @@ def main(argv=None):
     import os
     _TOKEN = a.token or os.environ.get("UII_TOKEN")
     base = a.hub or os.environ.get("UII_HUB_URL", "http://127.0.0.1:8400")
+
+    if a.verb == "doctor":
+        try:
+            from uii_analyzer.doctor import run as doctor_run
+        except ModuleNotFoundError:
+            print("doctor needs the analyzer piece (uii_analyzer) on this box",
+                  file=sys.stderr)
+            return 2
+        return doctor_run(hub_url=base, token=_TOKEN, config_path=a.config,
+                          listen_s=a.listen_s, as_json=_JSON)
 
     if a.verb == "system":
         print(json.dumps(_get(base, "/v1/system"), indent=2))
@@ -211,14 +258,21 @@ def main(argv=None):
         print(f"command {cid} submitted (evidence {resp['evidence_id']})")
         if a.watch:
             import time as _t
+            t0, last = _t.time(), None
             while True:
                 st = _get(base, f"/v1/commands/{cid}")
                 if st["progress"]:
-                    print(f"  {st['progress'][-1].get('pct', '')}% "
-                          f"{st['progress'][-1].get('message', '')}")
+                    cur = (st["progress"][-1].get("pct", ""),
+                           st["progress"][-1].get("message", ""))
+                    if cur != last:
+                        last = cur
+                        print(f"  {_t.time() - t0:5.0f}s  {cur[0]}%  {cur[1]}")
                 if st["state"] == "done":
                     result = st["result"]["data"]
-                    print(f"result: {result.get('status')}")
+                    print(f"result: {result.get('status')} "
+                          f"after {_t.time() - t0:.0f}s"
+                          + (f" ({result['reason']})"
+                             if result.get("reason") else ""))
                     for d in st.get("derived", []):
                         print(f"  -> {d['source']['channel']} = {d['data'].get('value')} "
                               f"{d['data'].get('unit')} [{(d.get('quality') or {}).get('status')}]")

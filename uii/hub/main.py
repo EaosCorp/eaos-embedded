@@ -142,7 +142,8 @@ class Hub:
         for svc in self.services:
             svc.stop.set()
         if self.api_server:
-            self.api_server.shutdown()
+            self.api_server.shutdown()       # stop serving
+            self.api_server.server_close()   # and release the listening socket
             self.api_server = None
         try:
             self.loop.call_soon_threadsafe(self.loop.stop)
