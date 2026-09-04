@@ -79,10 +79,16 @@ support, regulatory packages, refurb history, agent context.*
    (protocol.py isolates this).
 2. **Challenge-response module identity** — secure element on the H563
    module rev; replaces allowlist trust at VERIFYING (spec §5.4).
-3. **MQTT northbound publisher / cloud ingest** — CloudEvents over MQTT,
-   store-and-forward from the log (the log IS the outbox), resumable by
-   sequence; severity-based routing for alerts. This is where any consumer
-   of the legacy `tele/#` topics lands.
+3. **Northbound: the box serves, the platform pulls and streams** — the
+   evidence log is the queue (`seq` = offset); a collector on the Kafka side
+   (a tailnet node) walks `/v1/evidence?since=` (or holds `/v1/events` SSE)
+   and produces envelopes to a facility topic; the facility record is a sink
+   of the topic. The box never initiates and holds no cloud credentials.
+   Box-side prerequisites are small: SSE catch-up pagination (today caps at
+   500 on connect), a distinct read-only collector token. Design + phases:
+   vault `06-technical/architecture/instrument-interface/uii-results-egress-plan.md`.
+   MQTT/CloudEvents severity routing is a later variant of the same outbox;
+   any consumer of the legacy `tele/#` topics lands here.
 3b. **Faceplate command buttons** — the read-only faceplate is BUILT
    (staged: `extensions/faceplate/`, one route + one page at `/faceplate`,
    Eaos dark tokens, SSE-live). Next: the small CURATED button row
@@ -114,7 +120,10 @@ support, regulatory packages, refurb history, agent context.*
    (lamp) degradation; predictive reagent depletion.
 10. **mTLS / OAuth2 client-credentials** replacing bearer tokens; per-user
     roles; physical-presence second factor for hazardous commands.
-11. **Signed update/package flow** (P3), retention policy, TIME sync.
+11. **Signed update/package flow** (P3), retention policy (the blobstore has
+    `sweep()`; no policy drives it yet), TIME sync as code (today it is ops
+    units on the box: hourly NTP resync + hourly camera `SetTime` push, see
+    the DC Water edge-box notes in the vault).
 12. **Agent surface next steps** — runbook skills on the hub; optional MCP
     wrapper only when a shell-less agent surface needs one
     (`agent-interface.md`).
