@@ -1,0 +1,9 @@
+# Hub-box broker for legacy units that have been repointed at the hub
+# (mqtt_host -> this box). Bound to loopback + the instrument LAN only —
+# never the tailnet or cellular. Copy to /etc/mosquitto/conf.d/uii.conf.
+#
+# Units that keep their OWN broker (the HRSD topology) do not need this
+# broker at all; the shim subscribes to the unit directly.
+listener 1883 127.0.0.1
+listener 1883 10.10.11.20
+allow_anonymous true

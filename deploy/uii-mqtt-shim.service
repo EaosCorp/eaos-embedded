@@ -1,7 +1,7 @@
 [Unit]
 Description=UII MQTT shim — legacy NH4MOD units presented as UII modules
-After=uii-hub.service mosquitto.service
-Wants=uii-hub.service
+After=network-online.target uii-hub.service mosquitto.service
+Wants=network-online.target uii-hub.service
 
 [Service]
 Type=simple
@@ -11,6 +11,8 @@ Environment=PYTHONUNBUFFERED=1
 ExecStart=/usr/bin/python3 -m uii_analyzer.mqtt_shim
 Restart=always
 RestartSec=3
+# exit 2 = config rejected; restarting would only loop — fix the file, then start
+RestartPreventExitStatus=2
 
 [Install]
 WantedBy=multi-user.target

@@ -1,0 +1,88 @@
+{
+  "hub_id": "hub-hrsd-nans-01",
+  "allowed_types": [
+    "nh4mod-nh4",
+    "nh4mod-nox",
+    "nh4mod-po4"
+  ],
+  "extensions": [
+    "analyzer",
+    "scheduler",
+    "detections",
+    "authority",
+    "exports"
+  ],
+  "roles": {
+    "slot-1": {
+      "role": "nh4-influent",
+      "analyte": "NH4",
+      "sample_interval_s": 900,
+      "cal_max_age_s": 604800,
+      "calibrate_std_conc": 5.0,
+      "auto_take_control": false,
+      "auto_calibrate": false
+    }
+  },
+  "credentials": {},
+  "authority": {
+    "user": "disruptive",
+    "agent": "routine",
+    "system": "disruptive",
+    "plc": "routine"
+  },
+  "path_ceilings": {
+    "local": "hazardous",
+    "ot": "routine",
+    "cloud": "disruptive",
+    "cellular": "routine"
+  },
+  "detections": [
+    {
+      "id": "nh4-stale",
+      "type": "stale_data",
+      "channel": "nh4",
+      "window_s": 2700,
+      "severity": "warning",
+      "message": "no fresh NH4 result in 45 min"
+    },
+    {
+      "id": "nh4-high",
+      "type": "threshold",
+      "channel": "nh4",
+      "raise_above": 8.0,
+      "clear_below": 7.0,
+      "debounce_s": 0,
+      "severity": "alert",
+      "suppress_in_states": [
+        "priming",
+        "calibrating"
+      ],
+      "message": "NH4 above 8 mg/L"
+    },
+    {
+      "id": "cal-overdue",
+      "type": "cal_overdue",
+      "max_age_s": 604800,
+      "severity": "warning",
+      "ne107": "maintenance_required",
+      "message": "calibration older than 7 days"
+    },
+    {
+      "id": "pump-serial-down",
+      "type": "health_flag",
+      "field": "port_b_ok",
+      "equals": false,
+      "debounce_s": 30,
+      "severity": "critical",
+      "message": "pump controller serial port down"
+    },
+    {
+      "id": "bad-quality-streak",
+      "type": "quality_streak",
+      "channel": "nh4",
+      "count": 3,
+      "severity": "alert",
+      "message": "3 consecutive non-good NH4 results"
+    }
+  ]
+}
