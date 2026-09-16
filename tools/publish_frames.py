@@ -20,8 +20,10 @@ one declaration of what exists and at what cadence, not two. Cameras with `sourc
 skipped: nothing is pushing them here.
 
 CREDENTIALS, both from the environment, never on a command line:
-    EAOS_UII_VIEWER_TOKEN     the box's viewer token (GET only)
-    EAOS_WORK_ACCESS_TOKEN    the plane's access token
+    EAOS_UII_VIEWER_TOKEN      the box's viewer token (GET only)
+    EAOS_FRAMES_INGEST_TOKEN   the plane's INGEST token -- it opens the mailbox and nothing else,
+                               which is the one to put on a box. `EAOS_WORK_ACCESS_TOKEN` is taken
+                               too, for an operator pushing by hand; never provision a box with it.
 """
 from __future__ import annotations
 
@@ -137,7 +139,7 @@ def main(argv: list[str] | None = None) -> int:
     with open(a.cameras, encoding="utf-8") as f:
         cfg = yaml.safe_load(f) or {}
     viewer = os.environ.get(str(cfg.get("token_env") or "EAOS_UII_VIEWER_TOKEN"), "").strip()
-    work = os.environ.get("EAOS_WORK_ACCESS_TOKEN", "").strip()
+    work = (os.environ.get("EAOS_FRAMES_INGEST_TOKEN") or os.environ.get("EAOS_WORK_ACCESS_TOKEN") or "").strip()
     if not viewer:
         _log(f"no {cfg.get('token_env') or 'EAOS_UII_VIEWER_TOKEN'} in the environment; the boxes will refuse"); return 2
     every = _span_s(cfg.get("every"))
