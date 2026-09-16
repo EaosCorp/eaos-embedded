@@ -45,7 +45,7 @@ for h in $HOSTS; do
     rs "$SRC/uii/"          "$h" "$DEST/uii/"
     rs "$SRC/uii_vision/"   "$h" "$DEST/extensions/vision/"
     rs "$SRC/uii_analyzer/" "$h" "$DEST/extensions/analyzer/"
-    for x in authority detections exports faceplate scheduler; do
+    for x in authority detections exports faceplate scheduler publish; do
         rs "$SRC/extensions/$x/" "$h" "$DEST/extensions/$x/"
     done
     rs "$SRC/extensions/__init__.py" "$h" "$DEST/extensions/"

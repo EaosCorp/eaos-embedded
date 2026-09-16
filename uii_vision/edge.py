@@ -11,6 +11,13 @@ Config via env (all optional):
   UII_API_PORT       hub HTTP API           (default 8400)   UII_SB_PORT 7300
   UII_MODULE_ID campod-01   UII_SLOT slot-1   UII_CADENCE_S 15   UII_HUB_ID hub-edge-01
 
+Pushing to a work plane (the `publish` extension; all optional, and absent = off):
+  UII_PUBLISH_URL           https://<plane-host>/api/frames/ingest   -- setting it turns it on
+  UII_PUBLISH_EVERY_S       900        match the plant's cameras.yaml `every`
+  UII_PUBLISH_CAMERA        the plane's camera id, if it differs from UII_MODULE_ID
+  UII_PUBLISH_TOKEN_FILE    /etc/eaos/frames-ingest-token
+  UII_PUBLISH_MAX_W 1280    UII_PUBLISH_QUALITY 70   the cellular squeeze
+
 Run: python3 -m uii_vision.edge
 """
 from __future__ import annotations
@@ -63,9 +70,24 @@ def main():
             role["roi"] = json.load(f)
         n = len((role["roi"].get("polygons") or {}))
         print(f"[uii-vision] roi {roi_path}: {n} polygon(s)", flush=True)
+    # Pushing to a work plane: the plane cannot reach a tailnet, so the box sends outward on a
+    # cadence. No URL means the extension is not even loaded, which is how every box that has no
+    # plane behaves today.
+    publish = {}
+    plane_url = os.environ.get("UII_PUBLISH_URL", "").strip()
+    if plane_url:
+        publish = {"url": plane_url,
+                   "every_s": float(os.environ.get("UII_PUBLISH_EVERY_S", "900")),
+                   "token_file": os.environ.get("UII_PUBLISH_TOKEN_FILE", "/etc/eaos/frames-ingest-token"),
+                   "max_w": int(os.environ.get("UII_PUBLISH_MAX_W", "1280")),
+                   "quality": int(os.environ.get("UII_PUBLISH_QUALITY", "70")),
+                   "modules": {module_id: os.environ.get("UII_PUBLISH_CAMERA", module_id)}}
+        print(f"[uii-vision] publish {module_id} → {plane_url} every {publish['every_s']:.0f}s", flush=True)
     cfg = {"hub_id": os.environ.get("UII_HUB_ID", "hub-edge-01"),
-           "allowed_types": ["vision-cam"], "extensions": ["vision"],
-           "data_dir": data_dir, "roles": {slot: role}}
+           "allowed_types": ["vision-cam"],
+           "extensions": ["vision"] + (["publish"] if publish else []),
+           "data_dir": data_dir, "roles": {slot: role},
+           **({"publish": publish} if publish else {})}
     cfgp = os.path.join(data_dir, "hub.json")
     with open(cfgp, "w") as f:
         json.dump(cfg, f)
