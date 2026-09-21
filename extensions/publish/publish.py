@@ -86,6 +86,7 @@ class Publisher(threading.Thread):
             out["foam_type"] = d.get("foam_type")
             out["foam_permitted_use"] = (obs.get("quality") or {}).get("permitted_use")
             out["readings_at"] = obs.get("time")
+            out["confidence"] = d.get("confidence")
         iq = self.store.latest_observation(mid, "image_quality")
         if iq:
             out["image_quality"] = (iq.get("data") or {}).get("value")
@@ -95,6 +96,25 @@ class Publisher(threading.Thread):
             out["dose_class"] = d.get("class")
             out["dose_confidence"] = d.get("confidence")
         return {k: v for k, v in out.items() if v is not None}
+
+    def _regions(self, mid: str) -> dict:
+        """The PER-REGION results (2026-09-21): the interpreter scores each named polygon of the camera's ROI and
+        keeps them on the foam observation; the plane joins them to the asset each region covers through its
+        cameras.yaml `regions:` map. Nothing but the numbers and the class travels -- a model's own vector stays on
+        the box."""
+        obs = self.store.latest_observation(mid, "foam_coverage")
+        regions = ((obs or {}).get("data") or {}).get("regions") or {}
+        out: dict = {}
+        for name, r in regions.items():
+            if not isinstance(r, dict):
+                continue
+            row = {k: r.get(k) for k in ("coverage_pct", "foam_type", "confidence") if r.get(k) is not None}
+            model = r.get("model")
+            if isinstance(model, dict):
+                row["model"] = {k: model.get(k) for k in ("label", "score", "bucket") if model.get(k) is not None}
+            if row:
+                out[str(name)] = row
+        return out
 
     def _frame(self, mid: str) -> tuple[bytes | None, str | None, str | None]:
         """(jpeg, hash, captured_at) for the module's newest frame, squeezed for the link."""
@@ -144,7 +164,7 @@ class Publisher(threading.Thread):
                 continue                              # this module has nothing to say yet
             fresh = bool(digest) and self._sent_hash.get(mid) != digest
             payload = {"camera": camera, "captured_at": readings.get("readings_at") or shot,
-                       "frame_hash": digest, "readings": readings,
+                       "frame_hash": digest, "readings": readings, "regions": self._regions(mid),
                        "image_b64": base64.b64encode(body).decode() if (fresh and body) else None}
             try:
                 self._post(payload, token)

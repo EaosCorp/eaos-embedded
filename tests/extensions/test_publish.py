@@ -73,6 +73,30 @@ class TestPublish(unittest.TestCase):
         # the measurement's own time, not the frame's: a watch ages on the measurement
         self.assertEqual(payload["captured_at"], "2026-09-15T18:05:00Z")
 
+    def test_the_regions_travel_with_the_readings(self):
+        """The interpreter scores every named polygon of the ROI and keeps them on the foam observation
+        (`data.regions`); the plane joins them to assets through cameras.yaml. Only numbers, a class and
+        the region model's label/score/bucket go over the link -- never a model's vector."""
+        hub = _hub()
+        hub.store.obs[("campod-01", "foam_coverage")]["data"]["regions"] = {
+            "basin-west": {"coverage_pct": 6.1, "foam_type": "nuisance_white", "confidence": 0.7,
+                           "model": {"label": "light", "score": 0.61, "bucket": "low", "vector": [0.1, 0.2]}},
+            "basin-east": {"coverage_pct": 2.8, "foam_type": "none"},
+            "junk": "not a mapping"}
+        posts = []
+        p = _publisher(hub, posts)
+        p.tick()
+        regions = posts[0][0]["regions"]
+        self.assertEqual(set(regions), {"basin-west", "basin-east"})
+        self.assertEqual(regions["basin-west"]["model"], {"label": "light", "score": 0.61, "bucket": "low"})
+        self.assertEqual(regions["basin-east"], {"coverage_pct": 2.8, "foam_type": "none"})
+        self.assertEqual(posts[0][0]["readings"]["foam_coverage_pct"], 32.4)
+
+    def test_a_box_with_no_regions_sends_an_empty_map(self):
+        posts = []
+        _publisher(_hub(), posts).tick()
+        self.assertEqual(posts[0][0]["regions"], {})
+
     def test_an_unchanged_picture_is_not_sent_again_but_the_numbers_are(self):
         posts = []
         p = _publisher(_hub(), posts)
